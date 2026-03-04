@@ -1,7 +1,7 @@
 # AIMETA P=小说API_项目和章节管理|R=小说CRUD_章节管理|NR=不含内容生成|E=route:GET_POST_/api/novels/*|X=http|A=小说CRUD_章节|D=fastapi,sqlalchemy|S=db|RD=./README.ai
 import json
 import logging
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +53,61 @@ def _ensure_prompt(prompt: str | None, name: str) -> str:
     if not prompt:
         raise HTTPException(status_code=500, detail=f"未配置名为 {name} 的提示词，请联系管理员")
     return prompt
+
+
+def _normalize_options(options: Any) -> List[Dict[str, str]] | None:
+    if not isinstance(options, list):
+        return None
+    normalized: List[Dict[str, str]] = []
+    for index, option in enumerate(options, start=1):
+        default_id = f"option_{index}"
+        if isinstance(option, dict):
+            option_id = option.get("id") or default_id
+            label = (
+                option.get("label")
+                or option.get("text")
+                or option.get("value")
+                or option.get("name")
+            )
+            if label is None:
+                label = str(option)
+            normalized.append({"id": str(option_id), "label": str(label)})
+            continue
+        normalized.append({"id": default_id, "label": str(option)})
+    return normalized
+
+
+def _normalize_converse_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ai_message = payload.get("ai_message")
+    payload["ai_message"] = ai_message if isinstance(ai_message, str) else str(ai_message or "")
+
+    ui_control = payload.get("ui_control")
+    if not isinstance(ui_control, dict):
+        ui_control = {}
+    ui_type = ui_control.get("type")
+    if not isinstance(ui_type, str) or not ui_type.strip():
+        ui_control["type"] = "text_input"
+    options = _normalize_options(ui_control.get("options"))
+    if options is not None:
+        ui_control["options"] = options
+    else:
+        ui_control.pop("options", None)
+    placeholder = ui_control.get("placeholder")
+    if placeholder is not None and not isinstance(placeholder, str):
+        ui_control["placeholder"] = str(placeholder)
+    payload["ui_control"] = ui_control
+
+    conversation_state = payload.get("conversation_state")
+    payload["conversation_state"] = conversation_state if isinstance(conversation_state, dict) else {}
+
+    is_complete = payload.get("is_complete")
+    if isinstance(is_complete, bool):
+        payload["is_complete"] = is_complete
+    elif isinstance(is_complete, str):
+        payload["is_complete"] = is_complete.strip().lower() in {"true", "1", "yes"}
+    else:
+        payload["is_complete"] = bool(is_complete)
+    return payload
 
 
 @router.post("", response_model=NovelProjectSchema, status_code=status.HTTP_201_CREATED)
@@ -208,7 +263,7 @@ async def converse_with_concept(
     if parsed.get("is_complete"):
         parsed["ready_for_blueprint"] = True
 
-    parsed.setdefault("conversation_state", parsed.get("conversation_state", {}))
+    parsed = _normalize_converse_payload(parsed)
     return ConverseResponse(**parsed)
 
 

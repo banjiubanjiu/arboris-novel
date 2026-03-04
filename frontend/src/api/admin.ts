@@ -7,6 +7,54 @@ import type { NovelSectionResponse, NovelSectionType } from '@/api/novel'
 export const API_BASE_URL = import.meta.env.MODE === 'production' ? '' : 'http://127.0.0.1:8000'
 export const ADMIN_API_PREFIX = '/api/admin'
 
+const extractErrorMessage = (payload: unknown): string | null => {
+  if (payload == null) {
+    return null
+  }
+
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim()
+    return trimmed || null
+  }
+
+  if (Array.isArray(payload)) {
+    const parts = payload
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item
+        }
+        if (item && typeof item === 'object') {
+          const candidate = item as { msg?: unknown; loc?: unknown }
+          const msg = typeof candidate.msg === 'string' ? candidate.msg : ''
+          if (Array.isArray(candidate.loc) && msg) {
+            return `${candidate.loc.join('.')}: ${msg}`
+          }
+          if (msg) {
+            return msg
+          }
+        }
+        return ''
+      })
+      .filter(Boolean)
+    return parts.length ? parts.join('；') : null
+  }
+
+  if (typeof payload === 'object') {
+    const candidate = payload as { detail?: unknown; message?: unknown; msg?: unknown }
+    if ('detail' in candidate) {
+      return extractErrorMessage(candidate.detail)
+    }
+    if (typeof candidate.message === 'string') {
+      return candidate.message
+    }
+    if (typeof candidate.msg === 'string') {
+      return candidate.msg
+    }
+  }
+
+  return null
+}
+
 // 统一请求封装
 const request = async (url: string, options: RequestInit = {}) => {
   const authStore = useAuthStore()
@@ -29,7 +77,8 @@ const request = async (url: string, options: RequestInit = {}) => {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.detail || `请求失败，状态码: ${response.status}`)
+    const message = extractErrorMessage(errorData) || `请求失败，状态码: ${response.status}`
+    throw new Error(message)
   }
 
   if (response.status === 204) {
